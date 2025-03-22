@@ -11,6 +11,8 @@ import {
 } from './ui/select';
 import { Textarea } from './ui/textarea';
 import { BookOpen, Sparkles } from 'lucide-react';
+import { Frame } from '@gptscript-ai/gptscript';
+import renderEventMessage from '@/lib/renderEventMessage';
 
 const storiesPath = 'public/stories';
 
@@ -21,26 +23,76 @@ function StoryGenerator() {
   const [runStarted, setRunStarted] = useState<boolean>(false);
   const [runFinished, setRunFinished] = useState<boolean | null>(null);
   const [currentTool, setCurrentTool] = useState();
+  const [events, setEvents] = useState<Frame[]>([]);
 
   async function runScript() {
-    setRunStarted(true)
-    setRunFinished(false)
+    setRunStarted(true);
+    setRunFinished(false);
 
     const response = await fetch('/api/run-script', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ story, pages, path: storiesPath })
-    })
+      body: JSON.stringify({ story, pages, path: storiesPath }),
+    });
 
     if (response.ok && response.body) {
       // Handle streams from the API
-      console.log('Stream from the API:', response.body)
+      console.log('Stream from the API:', response.body);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      handleStream(reader, decoder);
     } else {
-      setRunFinished(true)
-      setRunStarted(false)
-      console.error('Failed to start the script')
+      setRunFinished(true);
+      setRunStarted(false);
+      console.error('Failed to start the script');
+    }
+  }
+
+  async function handleStream(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    decoder: TextDecoder,
+  ) {
+    // Manage the stream from the API
+    while (true) {
+      const { done, value } = await reader.read();
+
+      if (done) break; // Exit the loop when the stream is done
+
+      const chunk = decoder.decode(value, { stream: true });
+
+      // Split the chunk into events by splitting it by the event
+      const eventData = chunk
+        .split('\n\n')
+        .filter(line => line.startsWith('event: '))
+        .map(line => line.replace(/^event: /, ''));
+
+      // Parse the JSON data and update the state
+      eventData.forEach(data => {
+        try {
+          const parsedData = JSON.parse(data);
+          console.log(parsedData);
+
+          if (parsedData.type === 'callProgress') {
+            setProgress(
+              parsedData.output[parsedData.output.length - 1].content,
+            );
+            setCurrentTool(parsedData.tool?.description || '');
+          } else if (parsedData.type === 'callStart') {
+            setCurrentTool(parsedData.tool?.description || '');
+          } else if (parsedData.type === 'runFinish') {
+            setRunFinished(true);
+            setRunStarted(false);
+          } else {
+            setEvents(prevEvents => [...prevEvents, parsedData]);
+          }
+        } catch (error) {
+          console.error('Failed to parse JSON: ', error);
+        }
+      });
     }
   }
 
@@ -49,10 +101,13 @@ function StoryGenerator() {
       <h2 className="text-2xl font-bold mb-6 text-purple-800 flex items-center">
         <BookOpen className="mr-2" size={24} /> Create Your Story
       </h2>
-      
+
       <section className="flex-1 flex flex-col border border-purple-300 rounded-lg shadow-md p-6 md:p-8 space-y-4 bg-white">
         <div className="mb-2">
-          <label htmlFor="story-input" className="block text-sm font-medium text-gray-700 mb-1">
+          <label
+            htmlFor="story-input"
+            className="block text-sm font-medium text-gray-700 mb-1"
+          >
             Your Story Idea
           </label>
           <Textarea
@@ -63,13 +118,19 @@ function StoryGenerator() {
             placeholder="Write a story about a brave explorer who discovers a hidden world beneath the ocean..."
           />
         </div>
-        
+
         <div className="mb-2">
-          <label htmlFor="pages-select" className="block text-sm font-medium text-gray-700 mb-1">
+          <label
+            htmlFor="pages-select"
+            className="block text-sm font-medium text-gray-700 mb-1"
+          >
             Story Length
           </label>
           <Select onValueChange={value => setPages(parseInt(value))}>
-            <SelectTrigger id="pages-select" className="border-purple-200 focus:border-purple-400 focus:ring-purple-400">
+            <SelectTrigger
+              id="pages-select"
+              className="border-purple-200 focus:border-purple-400 focus:ring-purple-400"
+            >
               <SelectValue placeholder="Select number of pages" />
             </SelectTrigger>
 
@@ -83,10 +144,10 @@ function StoryGenerator() {
           </Select>
         </div>
 
-        <Button 
-          disabled={!story || !pages || runStarted} 
-          className="w-full bg-purple-600 hover:bg-purple-700 text-white transition-colors" 
-          size="lg" 
+        <Button
+          disabled={!story || !pages || runStarted}
+          className="w-full bg-purple-600 hover:bg-purple-700 text-white transition-colors"
+          size="lg"
           onClick={runScript}
         >
           <Sparkles className="mr-2" size={18} />
@@ -95,7 +156,9 @@ function StoryGenerator() {
       </section>
 
       <section className="flex-1 mt-6">
-        <h3 className="text-lg font-medium mb-2 text-gray-700">Generation Log</h3>
+        <h3 className="text-lg font-medium mb-2 text-gray-700">
+          Generation Log
+        </h3>
         <div className="flex flex-col-reverse w-full space-y-2 bg-gray-900 rounded-lg text-gray-200 font-mono p-4 md:p-6 h-64 overflow-y-auto shadow-inner">
           <div>
             {runFinished === null && (
@@ -112,10 +175,21 @@ function StoryGenerator() {
 
           {currentTool && (
             <div className="mb-2 border-l-2 border-purple-500 pl-3">
-              <span className="mr-3 text-purple-400 font-semibold">{'[Current Tool]'}</span>
+              <span className="mr-3 text-purple-400 font-semibold">
+                {'[Current Tool]'}
+              </span>
               <span className="text-purple-200">{currentTool}</span>
             </div>
           )}
+
+          <div className="space-y-5">
+            {events.map((event, index) => (
+              <div key={index}>
+                <span className="mr-5">{'>>'}</span>
+                {renderEventMessage(event)}
+              </div>
+            ))}
+          </div>
 
           {runStarted && (
             <div className="mb-2 text-green-300">
