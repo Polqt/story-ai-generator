@@ -13,7 +13,7 @@ const renderEventMessage = (event: Frame) => {
     case 'callChat':
       return (
         <div>
-          Chat in progress with your inpit {'>>'} {String(event.input)}
+          Chat in progress with your input {'>>'} {String(event.input)}
         </div>
       );
     case 'callProgress':
@@ -87,7 +87,7 @@ const renderEventMessage = (event: Frame) => {
         </div>
       );
     default:
-      return <pre>{JSON.stringify(event, null, 2)}</pre>;
+      return <pre>{JSON.stringify(event)}</pre>;
   }
 };
 
